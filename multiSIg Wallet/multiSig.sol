@@ -1,13 +1,14 @@
 pragma solidity 0.7.5;
+pragma abicoder v2;
 
 contract multiSig {
     // CONTRACT DATA STRUCTURES DEFINITION
     event depositDone(uint amount, address indexed depositedFrom);
     event withdrawFail(uint amount, uint contractBalance);
     struct TransferObject {
-        address destinationAddress;
+        address payable destinationAddress;
         uint amount;
-        uint approvals;   
+        uint approvals;
     }
     
     // MODIFIERS
@@ -21,12 +22,22 @@ contract multiSig {
             _;
         }
         
+        // makes sure that each transaction cannot be approved more than once from each owner
+        modifier uniqueApproval(int index){
+                address cur_owner = msg.sender;
+                for  (uint i=0; i<OWNER_MAPPING[cur_owner].length; i++){
+                    require(OWNER_MAPPING[cur_owner][i] != index, "Double verification error");
+                }
+            
+            _;
+        }
     // STORAGE VALUES
 
     address payable CONTRACT_ADDRESS;
     mapping(address => bool) private OWNERS;
-    address [] private OWNERS_LIST;
-    uint private REQUIRED_APPROVALS;
+    mapping(address => int []) public OWNER_MAPPING; //keeps track of which trandactions have been approved for each owner
+    address [] private OWNERS_LIST; // having a list of the onwer for direct reference
+    uint private REQUIRED_APPROVALS; 
     mapping(address => uint) private CONTRACT_BALANCE;
     TransferObject [] PERDING_TRANSFERS;
     
@@ -38,6 +49,7 @@ contract multiSig {
         
         for (uint i=0; i<_owners.length; i++) {
             OWNERS[_owners[i]] = true;
+            OWNER_MAPPING[_owners[i]] = [-10]; //dummy negative value
         }
         OWNERS[msg.sender] = true;
         
@@ -46,9 +58,7 @@ contract multiSig {
         REQUIRED_APPROVALS = _approvals;
         CONTRACT_ADDRESS = payable(address(this)) ;
         CONTRACT_BALANCE[CONTRACT_ADDRESS] = 0;
-        
 
-        
     }
 
     function withdraw (uint amount, address payable to) private balanceCheck(amount){
@@ -74,8 +84,10 @@ contract multiSig {
         return CONTRACT_BALANCE[CONTRACT_ADDRESS];
     }
     
-    function createTransferRequest (address payable _destinationAddress, uint amamamount) public checkOwners balanceCheck(amamamount) payable{
-
+    function createTransferRequest (address payable _destinationAddress, uint amamamount) public 
+    checkOwners 
+    balanceCheck(amamamount)
+    payable{
         if (REQUIRED_APPROVALS == 1){
             withdraw(amamamount, _destinationAddress);
         }
@@ -83,7 +95,22 @@ contract multiSig {
         else{
             TransferObject memory newTransfer = TransferObject(_destinationAddress, amamamount, 1);
             PERDING_TRANSFERS.push(newTransfer);
+            int latestIndex = int(PERDING_TRANSFERS.length)-1;
+            OWNER_MAPPING[msg.sender].push(latestIndex);
         }
     }
     
+    function getAllPendingTransfers() public view returns(TransferObject[] memory){
+        return PERDING_TRANSFERS;   
+    }
+    
+    function approveTransfer(uint _transferIndex) public checkOwners uniqueApproval(int(_transferIndex)){
+        require(PERDING_TRANSFERS[_transferIndex].approvals < REQUIRED_APPROVALS, "Transaction already approved");
+        PERDING_TRANSFERS[_transferIndex].approvals+=1;
+        OWNER_MAPPING[msg.sender].push(int(_transferIndex));
+        
+        if (PERDING_TRANSFERS[_transferIndex].approvals == REQUIRED_APPROVALS){
+            withdraw(PERDING_TRANSFERS[_transferIndex].amount, PERDING_TRANSFERS[_transferIndex].destinationAddress);
+        }
+    }
 }
